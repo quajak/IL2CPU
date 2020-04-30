@@ -43,23 +43,43 @@ namespace Cosmos.IL2CPU.X86.IL
         xMethodBase = aMethod.PluggedMethod.MethodBase;
       }
       var xMethodInfo = xMethodBase as MethodInfo;
+
       uint xReturnSize = 0;
       if (xMethodInfo != null)
       {
         xReturnSize = Align(SizeOfType(xMethodInfo.ReturnType), 4);
       }
+
       uint xOffset = 8;
       var xCorrectedOpValValue = aParam;
-      if (!aMethod.MethodBase.IsStatic && aParam > 0)
-      {
-        // if the method has a $this, the OpCode value includes the this at index 0, but GetParameters() doesnt include the this
-        xCorrectedOpValValue -= 1;
-      }
+
+      //calculate the length of the entire parameterse
+      uint xArgSize = 0;
       var xParams = xMethodBase.GetParameters();
-      if (aParam == 0 && !xMethodBase.IsStatic)
+      foreach (var xParam in xParams)
       {
-        // return the this parameter, which is not in .GetParameters()
-        uint xCurArgSize;
+        xArgSize += Align(SizeOfType(xParam.ParameterType), 4);
+      }
+
+      //Add size of $this
+      if (!xMethodBase.IsStatic)
+      {
+        //Calculate the size of $this
+        if (xMethodBase.DeclaringType.IsValueType)
+        {
+          // value types get a reference passed to the actual value, so pointer:
+          xArgSize += 4;
+        }
+        else
+        {
+          xArgSize += Align(SizeOfType(xMethodBase.DeclaringType), 4);
+        }
+      }
+
+      uint xCurArgSize;
+      if (aParam == 0 && !xMethodBase.IsStatic) // handle the this parameter, which is not in .GetParameters()
+      {
+        //Calculate the size of $this
         if (xMethodBase.DeclaringType.IsValueType)
         {
           // value types get a reference passed to the actual value, so pointer:
@@ -69,52 +89,47 @@ namespace Cosmos.IL2CPU.X86.IL
         {
           xCurArgSize = Align(SizeOfType(xMethodBase.DeclaringType), 4);
         }
-        uint xArgSize = 0;
-        foreach (var xParam in xParams)
-        {
-          xArgSize += Align(SizeOfType(xParam.ParameterType), 4);
-        }
-        if (!xMethodBase.IsStatic)
-        {
-          xArgSize += 4; // add $this pointer
-        }
-        for (int i = xParams.Length - 1; i >= aParam; i--)
+
+        // Calculate the size of all later parameters
+        for (int i = xParams.Length - 1; i >= 0; i--)
         {
           var xSize = Align(SizeOfType(xParams[i].ParameterType), 4);
           xOffset += xSize;
         }
+
+        //Add padding if return size is larger
         if (xReturnSize > xArgSize)
         {
           uint xExtraSize = xReturnSize - xCurArgSize;
           xOffset += xExtraSize;
         }
-
-        return (int)(xOffset + xCurArgSize - 4);
       }
-      else
+      else //Handle a normal parameter
       {
+        //If the original method is not static, we have to count $this
+        if (!xMethodBase.IsStatic && aParam > 0)
+        {
+          // if the method has a $this, the OpCode value includes the this at index 0, but GetParameters() doesnt include the this
+          xCorrectedOpValValue -= 1;
+        }
+
+        xCurArgSize = Align(SizeOfType(xParams[xCorrectedOpValValue].ParameterType), 4);
+
+        // Calculate the size of all later parameters
         for (int i = xParams.Length - 1; i > xCorrectedOpValValue; i--)
         {
           var xSize = Align(SizeOfType(xParams[i].ParameterType), 4);
           xOffset += xSize;
         }
-        var xCurArgSize = Align(SizeOfType(xParams[xCorrectedOpValValue].ParameterType), 4);
-        uint xArgSize = 0;
-        foreach (var xParam in xParams)
-        {
-          xArgSize += Align(SizeOfType(xParam.ParameterType), 4);
-        }
-        if (!xMethodBase.IsStatic)
-        {
-          xArgSize += 4; // add $this pointer
-        }
+
+        //Add padding if return size is larger
         if (xReturnSize > xArgSize)
         {
           uint xExtraSize = xReturnSize - xArgSize;
           xOffset += xExtraSize;
         }
-        return (int)(xOffset + xCurArgSize - 4);
       }
+      return (int)(xOffset + xCurArgSize - 4);
     }
 
     public static void DoExecute(XSharp.Assembler.Assembler Assembler, _MethodInfo aMethod, ushort aParam)
